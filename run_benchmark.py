@@ -4,11 +4,14 @@ import cv2
 import torch
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from jiwer import wer
+from difflib import SequenceMatcher
 from src.ocr_engine import VietAdminOCR
 from src.correction import VietAdminCorrection
 
-# --- UTILS ---
+# --- 1. CHUẨN HÓA & TIỆN ÍCH ---
 def normalize_text(text):
     if not text: return ""
     text = text.lower()
@@ -21,101 +24,150 @@ def load_text(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read().strip()
 
-# --- TILING LOGIC (Hàm bóc tách nâng cao) ---
-def get_tiled_text(img, ocr_reader):
+# --- 2. THUẬT TOÁN GHÉP MẢNH KHỬ TRÙNG (STITCHING) ---
+def smart_merge(s1, s2):
     """
-    Chiến lược bóc tách: Chia ảnh thành 4 vùng (2x2), 
-    phóng to và làm nét từng vùng để không sót chữ.
+    Tìm điểm cắt tối ưu giữa 2 đoạn văn bản chồng lấp để triệt tiêu lặp từ.
     """
-    h, w = img.shape[:2]
-    mid_h, mid_w = h // 2, w // 2
-    overlap = 100 # Chồng lấp để không mất chữ ở đường cắt
+    words1 = s1.split()
+    words2 = s2.split()
     
-    # Định nghĩa 4 vùng: Top-Left, Top-Right, Bottom-Left, Bottom-Right
+    # Lấy 30 từ cuối của s1 và 30 từ đầu của s2 để tìm điểm giao
+    tail_len = min(len(words1), 30)
+    head_len = min(len(words2), 30)
+    
+    tail = " ".join(words1[-tail_len:])
+    head = " ".join(words2[:head_len])
+    
+    matcher = SequenceMatcher(None, tail, head)
+    match = matcher.find_longest_match(0, len(tail), 0, len(head))
+    
+    if match.size > 10: # Nếu trùng nhau đủ lớn
+        # Cắt bỏ phần trùng ở đầu đoạn sau
+        overlap_str = head[match.b + match.size:].strip()
+        return s1 + " " + overlap_str + " " + " ".join(words2[head_len:])
+    
+    # Nếu không tìm thấy điểm cắt, dùng tập hợp để lọc bớt từ lặp cực bộ
+    last_10_words = set(words1[-10:])
+    filtered_head = [w for w in words2[:head_len] if w not in last_10_words]
+    return s1 + " " + " ".join(filtered_head) + " " + " ".join(words2[head_len:])
+
+# --- 3. CHIẾN LƯỢC TILING (STRIPES) ---
+def get_tiled_text(img, ocr_reader):
+    h, w = img.shape[:2]
+    h_step = h // 3
+    overlap = 150
     coords = [
-        (0, mid_h + overlap, 0, mid_w + overlap),
-        (0, mid_h + overlap, mid_w - overlap, w),
-        (mid_h - overlap, h, 0, mid_w + overlap),
-        (mid_h - overlap, h, mid_w - overlap, w)
+        (0, h_step + overlap, 0, w),
+        (h_step - overlap, 2*h_step + overlap, 0, w),
+        (2*h_step - overlap, h, 0, w)
     ]
     
-    tiled_raw_text = []
-    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) # Sharpening kernel
-
-    for i, (y1, y2, x1, x2) in enumerate(coords):
+    segments = []
+    for (y1, y2, x1, x2) in coords:
         tile = img[y1:y2, x1:x2]
-        # Tiền xử lý từng mảnh: Phóng to 1.5x và làm nét
-        tile = cv2.resize(tile, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_LANCZOS4)
-        tile = cv2.filter2D(tile, -1, kernel)
-        
-        # OCR từng mảnh
-        result = ocr_reader.readtext(tile, detail=0)
-        tiled_raw_text.extend(result)
+        tile = cv2.resize(tile, None, fx=1.2, fy=1.2, interpolation=cv2.INTER_LANCZOS4)
+        res = ocr_reader.readtext(tile, detail=0, paragraph=True)
+        segments.append(" ".join(res))
     
-    return " ".join(tiled_raw_text)
+    # Ghép thông minh
+    full_text = segments[0]
+    for i in range(1, len(segments)):
+        full_text = smart_merge(full_text, segments[i])
+    return full_text
 
-# --- MAIN EXPERIMENT ---
+# --- 4. VẼ BIỂU ĐỒ CHUẨN IEEE ---
+def save_figures(df):
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    # Figure 1: WER Comparison
+    plt.figure(figsize=(10, 6))
+    x = np.arange(len(df['Variant']))
+    width = 0.35
+    
+    plt.bar(x - width/2, df['G_WER (%)'], width, label='Global-OCR (Baseline)', color='#e74c3c')
+    plt.bar(x + width/2, df['T_WER (%)'], width, label='Tiled-OCR (Proposed)', color='#2ecc71')
+    
+    plt.ylabel('Word Error Rate (%)')
+    plt.title('Performance Comparison: Global vs Tiled OCR Strategies')
+    plt.xticks(x, df['Variant'], rotation=45)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('results/wer_comparison.pdf')
+    print(">>> Đã lưu biểu đồ: results/wer_comparison.pdf")
+
+    # Figure 2: Word Recovery (Recall)
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['Variant'], df['Words_G'], marker='o', label='Global Word Count', color='#e74c3c', linestyle='--')
+    plt.plot(df['Variant'], df['Words_T'], marker='s', label='Tiled Word Count', color='#2ecc71', linewidth=2)
+    plt.axhline(y=480, color='blue', linestyle=':', label='Ground Truth (Avg)')
+    
+    plt.ylabel('Number of Extracted Words')
+    plt.title('Word Recovery (Recall) across Different Conditions')
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('results/word_recovery.pdf')
+    print(">>> Đã lưu biểu đồ: results/word_recovery.pdf")
+
+# --- 5. MAIN PIPELINE ---
 def run_experiment():
-    print("\n>>> ĐANG KHỞI TẠO HỆ THỐNG TRÊN RTX 4090...")
+    print("\n" + "="*50)
+    print("VIETADMIN RESEARCH BENCHMARK - FINAL RUN")
+    print("="*50)
+
     ocr_engine = VietAdminOCR(use_gpu=True)
     corrector = VietAdminCorrection()
     
     augmented_dir = "data/augmented"
     image_files = sorted([f for f in os.listdir(augmented_dir) if f.endswith(".jpg")])
-    
+    gt_count_ref = 480 # Giá trị tham chiếu cho biểu đồ
+
     results_data = []
 
-    print(f"\n>>> BẮT ĐẦU SO SÁNH CHIẾN LƯỢC TRÊN {len(image_files)} MẪU...")
-
     for img_name in image_files:
-        print(f"\n--- Processing: {img_name} ---")
+        print(f"\n[Processing]: {img_name}")
         img_path = os.path.join(augmented_dir, img_name)
         img = cv2.imread(img_path)
         
-        # Xác định Ground Truth
         gt_file = "data/4_1_gt.txt" if "4_1" in img_name else "data/4_2_gt.txt"
         gt_raw = load_text(gt_file)
         if not gt_raw: continue
         gt_norm = normalize_text(gt_raw)
 
-        # --- CHIẾN LƯỢC 1: GLOBAL OCR (Cũ) ---
-        raw_global = ocr_engine.extract_text(img_path)
-        raw_global_text = " ".join([p['raw_text'] for p in raw_global])
-        clean_global_text = corrector.process_large_text(raw_global_text)
+        # Global Strategy
+        raw_g_res = ocr_engine.extract_text(img_path)
+        raw_g_text = " ".join([p['raw_text'] for p in raw_g_res])
+        clean_g_text = corrector.process_large_text(raw_g_text)
         
-        wer_global_raw = wer(gt_norm, normalize_text(raw_global_text))
-        wer_global_clean = wer(gt_norm, normalize_text(clean_global_text))
+        # Tiled Strategy
+        raw_t_text = get_tiled_text(img, ocr_engine.reader)
+        clean_t_text = corrector.process_large_text(raw_t_text)
 
-        # --- CHIẾN LƯỢC 2: TILED OCR (Đề xuất mới) ---
-        raw_tiled_text = get_tiled_text(img, ocr_engine.reader)
-        clean_tiled_text = corrector.process_large_text(raw_tiled_text)
+        # Metrics
+        w_g = wer(gt_norm, normalize_text(clean_g_text))
+        w_t = wer(gt_norm, normalize_text(clean_t_text))
         
-        wer_tiled_raw = wer(gt_norm, normalize_text(raw_tiled_text))
-        wer_tiled_clean = wer(gt_norm, normalize_text(clean_tiled_text))
-
-        # --- Ghi nhận kết quả ---
         results_data.append({
-            "Image": img_name,
-            "Variant": img_name.split("_v")[1].split(".")[0],
-            "WER_Global_Raw (%)": round(wer_global_raw * 100, 2),
-            "WER_Global_Clean (%)": round(wer_global_clean * 100, 2),
-            "WER_Tiled_Raw (%)": round(wer_tiled_raw * 100, 2),
-            "WER_Tiled_Clean (%)": round(wer_tiled_clean * 100, 2),
-            "Best_Improvement (%)": round((wer_global_raw - wer_tiled_clean) * 100, 2)
+            "Variant": img_name.replace(".jpg", "").replace("4_1_", "").replace("4_2_", ""),
+            "G_WER (%)": round(w_g * 100, 2),
+            "T_WER (%)": round(w_t * 100, 2),
+            "Words_G": len(clean_g_text.split()),
+            "Words_T": len(clean_t_text.split())
         })
-        
-        print(f"Global Clean WER: {round(wer_global_clean*100, 2)}% | Tiled Clean WER: {round(wer_tiled_clean*100, 2)}%")
 
-    # Lưu kết quả
     df = pd.DataFrame(results_data)
-    csv_path = "results/strategy_comparison.csv"
-    df.to_csv(csv_path, index=False)
+    # Gom nhóm theo Variant để vẽ biểu đồ trung bình
+    df_avg = df.groupby('Variant').mean().reset_index()
     
-    print(f"\n>>> KẾT QUẢ SO SÁNH ĐÃ LƯU TẠI: {csv_path}")
+    # Xuất dữ liệu
+    df.to_csv("results/final_strategy_comparison.csv", index=False)
+    save_figures(df_avg)
+    
     print("\n" + "="*50)
-    print("BẢNG SO SÁNH CHIẾN LƯỢC BÓC TÁCH (WER %)")
+    print("THỰC NGHIỆM HOÀN TẤT")
     print("="*50)
-    print(df[["Image", "WER_Global_Clean (%)", "WER_Tiled_Clean (%)", "Best_Improvement (%)"]])
+    print(df_avg)
 
 if __name__ == "__main__":
     run_experiment()
