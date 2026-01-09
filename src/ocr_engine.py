@@ -10,19 +10,25 @@ class VietAdminOCR:
         self.reader = easyocr.Reader(['vi'], gpu=use_gpu)
 
     def preprocess_image(self, img):
-        """Tiền xử lý ảnh để tăng khả năng nhận diện"""
         # 1. Chuyển sang ảnh xám
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # 2. Phóng to ảnh (Upscaling) - Cực kỳ quan trọng nếu chữ nhỏ
-        # Phóng to gấp 1.5 hoặc 2 lần
+        
+        # 2. Phóng to ảnh (giữ tỉ lệ để không vỡ chữ)
         height, width = gray.shape[:2]
-        img_resized = cv2.resize(gray, (int(width * 1.5), int(height * 1.5)), interpolation=cv2.INTER_CUBIC)
-
-        # 3. Tăng độ tương phản (Optional - có thể thử nếu ảnh mờ)
-        # img_enhanced = cv2.detailEnhance(img_resized, sigma_s=10, sigma_r=0.15)
-
-        return img_resized
+        img_resized = cv2.resize(gray, (int(width * 2.0), int(height * 2.0)), interpolation=cv2.INTER_CUBIC)
+        
+        # 3. Áp dụng Adaptive Thresholding (Nhị phân hóa thích nghi)
+        # Giúp làm nổi bật chữ đen trên nền trắng, loại bỏ nhiễu nền mờ
+        binary_img = cv2.adaptiveThreshold(
+            img_resized, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # 4. Khử nhiễu nhẹ (Denoising)
+        denoised = cv2.fastNlMeansDenoising(binary_img, None, 10, 7, 21)
+        
+        return denoised
+    
 
     def pdf_to_images(self, pdf_path):
         print(f"Đang xử lý PDF: {pdf_path}")
@@ -53,8 +59,8 @@ class VietAdminOCR:
             # - add_margin: Thêm lề xung quanh từ để nhận diện dấu tốt hơn
 
             ocr_result = self.reader.readtext(
-                processed_img, 
-                detail=1, 
+                processed_img,
+                detail=1,
                 paragraph=False,     # Thử tắt paragraph để nó đọc từng dòng nhỏ trước
                 contrast_ths=0.1,    # Nhạy hơn với chữ mờ
                 adjust_contrast=0.7, # Tự động tăng tương phản

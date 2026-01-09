@@ -14,25 +14,33 @@ class VietAdminCorrection:
         self.model.eval()
 
     def correct_chunk(self, text):
+        # Lưu các thực thể quan trọng không muốn model tự ý sửa
+        protected_keywords = ["COVID-19", "COVID", "19/CT-TTg", "1899/SGDĐT-CTrTT"]
+        
         inputs = self.tokenizer(
-            text, 
-            return_tensors="pt", 
-            truncation=True, 
-            max_length=160
+            text, return_tensors="pt", truncation=True, max_length=160
         ).to(self.device)
 
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs, 
                 max_new_tokens=160,
-                num_beams=3,             # Giảm beam search để bớt "sáng tạo"
-                repetition_penalty=1.2,  # Tránh lặp và ảo giác
-                length_penalty=1.0,      # Không ưu tiên câu dài
-                early_stopping=True
+                num_beams=5,
+                no_repeat_ngram_size=2 # Tránh lặp từ
             )
         
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        corrected = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Bước hậu xử lý: Nếu text gốc có COVID-19 mà model sửa thành H1N1, ta trả lại COVID-19
+        for kw in protected_keywords:
+            if kw.lower() in text.lower() and kw.lower() not in corrected.lower():
+                # Tìm cách khôi phục lại từ khóa (đây là một thủ thuật xử lý lỗi model)
+                import re
+                corrected = re.sub(r"cúm A-H1N1|H1N1|cúm A", kw, corrected, flags=re.IGNORECASE)
+                
+        return corrected
     
+
 
     def process_large_text(self, text, chunk_size=30):
         """
