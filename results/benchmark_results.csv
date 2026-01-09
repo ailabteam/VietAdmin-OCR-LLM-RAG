@@ -1,11 +1,11 @@
-Image,Variant,WER_Raw (%),WER_Clean (%),Improvement (%)
-4_1_v0_original.jpg,0_original,99.57,88.27,11.3
-4_1_v1_noisy.jpg,1_noisy,98.08,105.54,-7.46
-4_1_v2_blur.jpg,2_blur,92.54,62.9,29.64
-4_1_v3_dark.jpg,3_dark,91.26,68.02,23.24
-4_1_v4_rotated.jpg,4_rotated,97.87,94.67,3.2
-4_2_v0_original.jpg,0_original,99.04,96.5,2.55
-4_2_v1_noisy.jpg,1_noisy,99.04,82.8,16.24
-4_2_v2_blur.jpg,2_blur,90.13,66.88,23.25
-4_2_v3_dark.jpg,3_dark,97.13,91.4,5.73
-4_2_v4_rotated.jpg,4_rotated,97.77,116.88,-19.11
+Image,Variant,Words_GT,Words_Raw,WER_Raw (%),WER_Clean (%),Improvement (%)
+4_1_v0_original.jpg,0_original,511,300,95.5,80.04,15.46
+4_1_v1_noisy.jpg,1_noisy,511,270,95.5,97.85,-2.35
+4_1_v2_blur.jpg,2_blur,511,494,88.85,52.45,36.4
+4_1_v3_dark.jpg,3_dark,511,427,76.91,44.23,32.68
+4_1_v4_rotated.jpg,4_rotated,511,357,93.93,79.26,14.68
+4_2_v0_original.jpg,0_original,336,203,96.43,94.64,1.79
+4_2_v1_noisy.jpg,1_noisy,336,173,96.43,77.68,18.75
+4_2_v2_blur.jpg,2_blur,336,321,86.9,56.25,30.65
+4_2_v3_dark.jpg,3_dark,336,264,89.29,76.79,12.5
+4_2_v4_rotated.jpg,4_rotated,336,235,95.24,101.79,-6.55
